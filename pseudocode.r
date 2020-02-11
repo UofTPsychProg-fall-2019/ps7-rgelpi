@@ -66,3 +66,69 @@ for (block : human_judgments){
 
 plot_bar_graph(x = blicketConsistency, y = score, fill = nonBlicketConsistency) +
 	facet_grid(~.condition)
+
+# Below is an example of the webppl function (this uses the Markov chain Monte Carlo sampling method, but the output will be of the same form for SMC.) The parameters here are fixed, but can be changed through the use of the rwebppl tools.
+
+chains = "
+var rule_dist = Infer({method: 'MCMC', samples:25000, lag:2, burn:5000},  function(){
+  var tau = 0.4
+  var e_ne_prob = 0.2
+  var noiseparam = 0.001
+   //Dirichlet prior on feature distribution, with A being more likely
+   //phi is the distribution over features (the entries in phi sum to 1) 
+  var phi = dirichlet(Vector([4, 1, 1, 1, 1]))
+  //uncomment for uniform prior on feature distribution
+  //var phi = dirichlet(Vector([1, 1, 1, 1, 1]))
+  var featureDist = Categorical({ps: phi, vs: ['A','B', 'C', 'D', 'E']})
+  var samplePred = function() {
+    if (flip(e_ne_prob)) {
+      var trait1 = sample(featureDist)
+      var trait2 = sample(featureDist)
+      var op = flip() ? '==' : '!='
+      return [op, trait1, trait2]
+    } 
+    else {
+      var trait = sample(featureDist)
+      var value = flip() ? 'true' : 'false'
+      return ['==', trait, value]
+    }
+  }
+  // generates either a predicate or an and between two predicates or conjunctions
+  var sampleConj = function() {
+    if(flip(tau)) {
+      var c = sampleConj()
+      var p = samplePred()
+      return ['&&', c, p]
+    } else {
+      return samplePred()
+    }
+  }
+  // the base function for generating rules, this generates either a conjugate expression
+  // or disjunction between conjugate expressions
+  var getFormula = function() {
+    if(flip(tau)) {
+      var c = sampleConj()
+      var f = getFormula()
+      return ['||', c, f]
+    } else {
+      return sampleConj()
+    }
+  }
+  // sample a rule from the prior
+  var e = getFormula();
+  // make the rule look nice (for the table)
+  var s = prettify(e);
+  // turn the rule into a function that can be run on blocks
+  var f = runify(e);
+  //var f_fuzzy = function(x) {return f(x) ? flip(noiseparam) : flip(1-noiseparam)}
+  // condition on all the training blocks having the same label (up to noise)
+  var rule_outputs = map(f, training_blocks);
+  var condition_on_equality = function(rule_output, label) {
+    observe(Bernoulli({p: rule_output ? (1-noiseparam) : noiseparam}), label);
+  };
+  var rule_outputs = map(f, training_blocks);
+  var n_obs = 10;
+  map2(condition_on_equality, rule_outputs.slice(0,n_obs), training_labels.slice(0,n_obs));
+//This simply returns the rule strings, but it can be edited to return a marginal rule distribution, the block probabilities, etc.
+  return s
+})"
